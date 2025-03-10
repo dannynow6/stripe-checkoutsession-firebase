@@ -1,11 +1,16 @@
 // Example 'createCheckoutSession' in /functions/index.js
+const admin = require("firebase-admin");
 const {
   onCall,
   onRequest,
   HttpsError,
 } = require("firebase-functions/v2/https");
+const { logger } = require("firebase-functions");
 const { defineString } = require("firebase-functions/params");
 const { Stripe } = require("stripe");
+
+admin.initializeApp(); // initialize the app
+const db = admin.firestore(); // access the database as admin
 
 // secret stored in .env.local and/or .env.[firebase-project-name]
 const stripeSecret = defineString("STRIPE_SECRET_KEY");
@@ -187,7 +192,50 @@ exports.stripeWebhook = onRequest(
 );
 
 // helper functions
+// Note: handleCheckoutSession logic will be specific to your project and needs
+// this is an incomplete example to give you an idea of how to start
 const handleCheckoutSession = async (session) => {
   // code to execute on successful checkout session
   // backend logic you want to execute only in the event of successful purchase/checkout
+  // for instance, if set, you can extract user uid from session metadata
+  // this would be set in createCheckoutSession
+  const uid = session.metadata.uid;
+  // just as a simple example of what you might do here:
+  // try to access stripe line items from checkout session to access purchase data
+  try {
+    const stripe = new Stripe(stripeSecret.value());
+    const sessionWithLineItems = await stripe.checkout.sessions.retrieve(
+      session.id,
+      {
+        expand: ["line_items"],
+      }
+    );
+
+    // Access the line items
+    const lineItems = sessionWithLineItems.line_items;
+    // Pull out relevant data from lineItems
+    // for instance, the priceId if there are multiple products to determine db updates needed
+    if (lineItems && lineItems.data && lineItems.data.length > 0) {
+      const lineItem = lineItems.data[0];
+      // assign priceId to variable
+      const priceId = lineItem.price.id;
+    } else {
+      logger.warn(
+        `No line items found for session ${session.id} and user ${uid}`
+      );
+      return;
+    }
+
+    // You can then access the firestore database as admin and make any necessary updates
+    // after successful user purchase
+    // use a transaction to ensure atomicity
+    // see top for imports, initializing app, and database
+    await db.runTransaction(async (transaction) => {
+      // Code to run your database transaction and make necessary updates
+    });
+
+    logger.info(`Successful... ${uid}`);
+  } catch (error) {
+    logger.error(`Error processing checkout session for user ${uid}: `, error);
+  }
 };
