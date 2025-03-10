@@ -1,5 +1,9 @@
 // Example 'createCheckoutSession' in /functions/index.js
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const {
+  onCall,
+  onRequest,
+  HttpsError,
+} = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const { Stripe } = require("stripe");
 
@@ -126,3 +130,64 @@ exports.getSession = onCall(async (request) => {
     throw new HttpsError("internal", "Error retrieving session ID.");
   }
 });
+
+// create s webhook to listen for stripe events
+exports.stripeWebhook = onRequest(
+  // set maxInstances and set rawBody: true
+  { maxInstances: 1, rawBody: true },
+  async (request, response) => {
+    response.set("Access-Control-Allow-Origin", "*");
+    response.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Stripe-Signature"
+    );
+
+    // handle preflight requests
+    if (request.method === "OPTIONS") {
+      response.status(200).send();
+      return;
+    }
+    // Only accept POST requests
+    if (request.method !== "POST") {
+      throw new HttpsError("invalid-argument", "Method Not Allowed");
+    }
+    // set stripe-signature to variable
+    const sig = request.headers["stripe-signature"];
+    // define event variable
+    let event;
+    // Create stripe instance to listen for events
+    // use try/catch to handle errors
+    try {
+      const stripe = new Stripe(stripeSecret.value());
+      event = stripe.webhooks.constructEvent(
+        request.rawBody,
+        sig,
+        webhookSecret.value()
+      );
+      // if error, log errors and return
+    } catch (error) {
+      logger.error("Webhook signature verification failed: ", error.message);
+      response.status(400).send(`Webhook Error: ${error.message}`);
+      return;
+    }
+    // Handle the event - process successful purchase
+    // set Stripe docs for all event types
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      // process the successful transaction
+      // here, using a 'helper' function handleCheckoutSession
+      await handleCheckoutSession(session);
+    } else {
+      logger.info(`Unhandled event type: ${event.type}`);
+    }
+
+    // Respond to Stripe to acknowledge receipt of the event
+    response.json({ received: true });
+  }
+);
+
+// helper functions
+const handleCheckoutSession = async (session) => {
+  // code to execute on successful checkout session
+  // backend logic you want to execute only in the event of successful purchase/checkout
+};
